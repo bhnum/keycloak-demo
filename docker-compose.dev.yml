@@ -3,9 +3,9 @@ services:
     image: quay.io/keycloak/keycloak:24.0.5
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://auth_db:5432/${DB_NAME}
-      KC_DB_USERNAME: ${DB_USERNAME}
-      KC_DB_PASSWORD: ${DB_PASSWORD}
+      KC_DB_URL: jdbc:postgresql://auth_db:5430/${AUTH_DB_NAME}
+      KC_DB_USERNAME: ${AUTH_DB_USERNAME}
+      KC_DB_PASSWORD: ${AUTH_DB_PASSWORD}
 
       KC_HOSTNAME: localhost
       KC_HOSTNAME_PORT: 8080
@@ -17,24 +17,93 @@ services:
       KC_METRICS_ENABLED: true
       KC_HEALTH_ENABLED: true
 
-      KEYCLOAK_ADMIN: ${ADMIN_USERNAME}
-      KEYCLOAK_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      
+      KEYCLOAK_ADMIN: ${AUTH_ADMIN_USERNAME}
+      KEYCLOAK_ADMIN_PASSWORD: ${AUTH_ADMIN_PASSWORD}
     command: start-dev
     depends_on:
-      - auth_db
+      auth_db:
+        condition: service_healthy
     ports:
       - 8080:8080
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e \"GET /health/ready HTTP/1.1\r
+
+            host: http://localhost\r
+
+            Connection: close\r
+
+            \r
+
+            \" >&3;grep \"HTTP/1.1 200 OK\" <&3"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 15
 
   auth_db:
     image: postgres:latest
     environment:
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${AUTH_DB_NAME}
+      POSTGRES_USER: ${AUTH_DB_USERNAME}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD}
+    command: -p 5430
     volumes:
       - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: test-app-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      network: host
+    environment:
+      AUTH_URL: http://keycloak:8080/auth
+      AUTH_CLIENT_ID: ${APP_CLIENT_ID}
+      AUTH_CLIENT_SECRET: ${APP_CLIENT_SECRET}
+      AUTH_REALM: ${APP_REALM}
+
+      DB_HOST: app_db
+      DB_PORT: 5431
+      DB_NAME: ${APP_DB_NAME}
+      DB_USERNAME: ${APP_DB_USERNAME}
+      DB_PASSWORD: ${APP_DB_PASSWORD}
+    command:
+      - bash
+      - -c
+      - alembic upgrade head && fastapi dev --host 0.0.0.0 --port 8010
+    ports:
+      - 8010:8010
+    volumes:
+      - .:/app
+    depends_on:
+      app_db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  app_db:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: ${APP_DB_NAME}
+      POSTGRES_USER: ${APP_DB_USERNAME}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD}
+    command: -p 5431
+    volumes:
+      - app_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
   auth_db_data:
+  app_db_data:

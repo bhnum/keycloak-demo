@@ -1,0 +1,4 @@
+# Alembic migrations
+
+- Run `alembic revision --autogenerate -m "<message>"` to autogenerate migration
+- Run `alembic upgrade head` to run migrations
